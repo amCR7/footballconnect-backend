@@ -1,0 +1,235 @@
+// FootballConnect — Prisma Schema
+// PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  PLAYER
+  COACH
+  CLUB
+}
+
+enum DominantFoot {
+  LEFT
+  RIGHT
+  BOTH
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+enum MessageMediaType {
+  TEXT
+  IMAGE
+  VIDEO
+}
+
+enum NotificationType {
+  NEW_MESSAGE
+  PROFILE_VIEW
+  CONTACT_REQUEST
+  SYSTEM
+}
+
+// ─── Core user ────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         UserRole
+  isActive     Boolean  @default(true) @map("is_active")
+  fcmToken     String?  @map("fcm_token")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  player        Player?
+  coach         Coach?
+  club          Club?
+  sentMessages      Message[]      @relation("SentMessages")
+  conversationsA    Conversation[] @relation("ParticipantA")
+  conversationsB    Conversation[] @relation("ParticipantB")
+  favorites         Favorite[]     @relation("UserFavorites")
+  favoritedBy       Favorite[]     @relation("FavoritedUser")
+  notifications     Notification[]
+  media             Media[]
+  careerHistory     CareerHistory[]
+
+  @@map("users")
+}
+
+// ─── Player ───────────────────────────────────────────────────────────────────
+
+model Player {
+  id                 String       @id @default(uuid())
+  userId             String       @unique @map("user_id")
+  user               User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firstName          String       @map("first_name")
+  lastName           String       @map("last_name")
+  birthDate          DateTime?    @map("birth_date")
+  nationality        String?
+  province           String?
+  city               String?
+  heightCm           Int?         @map("height_cm")
+  weightKg           Int?         @map("weight_kg")
+  dominantFoot       DominantFoot? @map("dominant_foot")
+  mainPosition       String?      @map("main_position")
+  secondaryPositions Json         @default("[]") @map("secondary_positions")
+  avatarUrl          String?      @map("avatar_url")
+  highlightVideoUrl  String?      @map("highlight_video_url")
+  bio                String?
+  goals              Int          @default(0)
+  assists            Int          @default(0)
+  minutesPlayed      Int          @default(0) @map("minutes_played")
+  achievements       Json         @default("[]")
+  searchVector       String?      @map("search_vector")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+
+  @@map("players")
+}
+
+// ─── Coach ────────────────────────────────────────────────────────────────────
+
+model Coach {
+  id              String   @id @default(uuid())
+  userId          String   @unique @map("user_id")
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firstName       String   @map("first_name")
+  lastName        String   @map("last_name")
+  province        String?
+  city            String?
+  avatarUrl       String?  @map("avatar_url")
+  licenses        Json     @default("[]")
+  education       Json     @default("[]")
+  specialties     Json     @default("[]")
+  languages       Json     @default("[]")
+  experienceYears Int      @default(0) @map("experience_years")
+  achievements    Json     @default("[]")
+  bio             String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("coaches")
+}
+
+// ─── Club ─────────────────────────────────────────────────────────────────────
+
+model Club {
+  id           String   @id @default(uuid())
+  userId       String   @unique @map("user_id")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name         String
+  shieldUrl    String?  @map("shield_url")
+  city         String?
+  province     String?
+  category     String?
+  foundedYear  Int?     @map("founded_year")
+  stadium      String?
+  website      String?
+  socialLinks  Json     @default("{}") @map("social_links")
+  description  String?
+  currentNeeds Json     @default("[]") @map("current_needs")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("clubs")
+}
+
+// ─── Chat ─────────────────────────────────────────────────────────────────────
+
+model Conversation {
+  id             String    @id @default(uuid())
+  participantAId String    @map("participant_a_id")
+  participantBId String    @map("participant_b_id")
+  participantA   User      @relation("ParticipantA", fields: [participantAId], references: [id])
+  participantB   User      @relation("ParticipantB", fields: [participantBId], references: [id])
+  lastMessageAt  DateTime? @map("last_message_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  messages       Message[]
+
+  @@unique([participantAId, participantBId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String           @id @default(uuid())
+  conversationId String           @map("conversation_id")
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String           @map("sender_id")
+  sender         User             @relation("SentMessages", fields: [senderId], references: [id])
+  content        String?
+  mediaType      MessageMediaType @default(TEXT) @map("media_type")
+  mediaUrl       String?          @map("media_url")
+  isRead         Boolean          @default(false) @map("is_read")
+  sentAt         DateTime         @default(now()) @map("sent_at")
+
+  @@map("messages")
+}
+
+// ─── Social ───────────────────────────────────────────────────────────────────
+
+model Favorite {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  user         User     @relation("UserFavorites", fields: [userId], references: [id], onDelete: Cascade)
+  targetUserId String   @map("target_user_id")
+  targetUser   User     @relation("FavoritedUser", fields: [targetUserId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, targetUserId])
+  @@map("favorites")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String           @map("user_id")
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  payload   Json             @default("{}")
+  isRead    Boolean          @default(false) @map("is_read")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  @@map("notifications")
+}
+
+// ─── Media ────────────────────────────────────────────────────────────────────
+
+model Media {
+  id           String    @id @default(uuid())
+  ownerId      String    @map("owner_id")
+  owner        User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  mediaType    MediaType @map("media_type")
+  url          String
+  thumbnailUrl String?   @map("thumbnail_url")
+  sizeBytes    Int?      @map("size_bytes")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@map("media")
+}
+
+// ─── Career history ───────────────────────────────────────────────────────────
+
+model CareerHistory {
+  id         String  @id @default(uuid())
+  userId     String  @map("user_id")
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityName String  @map("entity_name")
+  category   String?
+  yearStart  Int?    @map("year_start")
+  yearEnd    Int?    @map("year_end")
+  role       String?
+
+  @@map("career_history")
+}
