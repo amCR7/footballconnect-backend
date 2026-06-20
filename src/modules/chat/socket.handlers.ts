@@ -1,9 +1,9 @@
 import { Server } from 'socket.io'
 import { PrismaClient } from '@prisma/client'
 import jwt from 'jsonwebtoken'
+import { sendPushNotification } from '../../config/firebase'
 
 export function setupSocketHandlers(io: Server, prisma: PrismaClient) {
-  // Middleware de autenticación para Socket.io
   io.use((socket, next) => {
     const token =
       socket.handshake.auth.token ||
@@ -25,12 +25,9 @@ export function setupSocketHandlers(io: Server, prisma: PrismaClient) {
     const userId = socket.data.userId
     console.log(`Socket conectado: ${userId}`)
 
-    // Unirse a sala personal para recibir notificaciones
     socket.join(`user:${userId}`)
 
-    // ── Unirse a conversación ───────────────────────────────────────────────
     socket.on('join_conversation', async (conversationId: string) => {
-      // Verificar que el usuario pertenece a la conversación
       const conv = await prisma.conversation.findFirst({
         where: {
           id: conversationId,
@@ -38,11 +35,9 @@ export function setupSocketHandlers(io: Server, prisma: PrismaClient) {
         },
       })
       if (!conv) return
-
       socket.join(`conv:${conversationId}`)
     })
 
-    // ── Enviar mensaje ─────────────────────────────────────────────────────
     socket.on('send_message', async (data: {
       conversationId: string
       content?: string
@@ -50,7 +45,6 @@ export function setupSocketHandlers(io: Server, prisma: PrismaClient) {
       mediaUrl?: string
     }) => {
       try {
-        // Verificar pertenencia a la conversación
         const conv = await prisma.conversation.findFirst({
           where: {
             id: data.conversationId,
@@ -59,7 +53,6 @@ export function setupSocketHandlers(io: Server, prisma: PrismaClient) {
         })
         if (!conv) return
 
-        // Guardar mensaje
         const message = await prisma.message.create({
           data: {
             conversationId: data.conversationId,
@@ -70,16 +63,15 @@ export function setupSocketHandlers(io: Server, prisma: PrismaClient) {
           },
         })
 
-        // Actualizar timestamp de la conversación
         await prisma.conversation.update({
           where: { id: data.conversationId },
           data: { lastMessageAt: new Date() },
         })
 
-        // Emitir a todos en la sala de la conversación
+        // Emitir a todos en la sala
         io.to(`conv:${data.conversationId}`).emit('new_message', message)
 
-        // Notificar al otro participante si no está en la sala
+        // Notificar al otro participante
         const otherUserId =
           conv.participantAId === userId ? conv.participantBId : conv.participantAId
 
@@ -87,12 +79,76 @@ export function setupSocketHandlers(io: Server, prisma: PrismaClient) {
           conversationId: data.conversationId,
           lastMessage: message,
         })
+
+        // Enviar push notification si el otro usuario no está en la sala
+        const otherSocketsInConv = await io
+          .in(`conv:${data.conversationId}`)
+          .fetchSockets()
+
+        const otherIsInRoom = otherSocketsInConv.some(
+          (s) => s.data.userId === otherUserId
+        )
+
+        if (!otherIsInRoom) {
+          // Obtener FCM token del destinatario
+          const otherUser = await prisma.user.findUnique({
+            where: { id: otherUserId },
+            select: {
+              fcmToken: true,
+              player: { select: { firstName: true, lastName: true } },
+              coach: { select: { firstName: true, lastName: true } },
+              club: { select: { name: true } },
+            },
+          })
+
+          const sender = await prisma.user.findUnique({
+            where: { id: userId },
+            select: {
+              player: { select: { firstName: true, lastName: true } },
+              coach: { select: { firstName: true, lastName: true } },
+              club: { select: { name: true } },
+            },
+          })
+
+          const senderName = sender?.player
+            ? `${sender.player.firstName} ${sender.player.lastName}`
+            : sender?.coach
+            ? `${sender.coach.firstName} ${sender.coach.lastName}`
+            : sender?.club?.name ?? 'Alguien'
+
+          if (otherUser?.fcmToken) {
+            await sendPushNotification({
+              fcmToken: otherUser.fcmToken,
+              title: senderName,
+              body: data.content || '📷 Imagen',
+              data: {
+                type: 'new_message',
+                conversationId: data.conversationId,
+                senderId: userId,
+              },
+            })
+          }
+
+          // Crear notificación en BD
+          await prisma.notification.create({
+            data: {
+              userId: otherUserId,
+              type: 'NEW_MESSAGE',
+              payload: {
+                conversationId: data.conversationId,
+                senderId: userId,
+                senderName,
+                preview: data.content?.substring(0, 100) || '📷 Imagen',
+              },
+            },
+          })
+        }
       } catch (err) {
+        console.error('Error en send_message:', err)
         socket.emit('error', { message: 'Error al enviar mensaje' })
       }
     })
 
-    // ── Marcar como leído ──────────────────────────────────────────────────
     socket.on('mark_read', async (conversationId: string) => {
       await prisma.message.updateMany({
         where: {
@@ -102,14 +158,12 @@ export function setupSocketHandlers(io: Server, prisma: PrismaClient) {
         },
         data: { isRead: true },
       })
-
       socket.to(`conv:${conversationId}`).emit('messages_read', {
         conversationId,
         readBy: userId,
       })
     })
 
-    // ── Escribiendo... ─────────────────────────────────────────────────────
     socket.on('typing', (conversationId: string) => {
       socket.to(`conv:${conversationId}`).emit('user_typing', { userId })
     })
