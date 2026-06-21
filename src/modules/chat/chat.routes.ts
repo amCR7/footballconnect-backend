@@ -101,7 +101,10 @@ export async function chatRoutes(app: FastifyInstance) {
     }
   })
 
-  app.put('/conversations/:id/read', auth, async (request: any) => {
+  app.put('/conversations/:id/read', {
+    ...auth,
+    config: { rawBody: false },
+  } as any, async (request: any) => {
     const { id } = request.params as any
     const userId = request.user.sub
     await prisma.message.updateMany({
