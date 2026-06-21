@@ -67,7 +67,7 @@ async function bootstrap() {
   app.get('/health', async () => ({ status: 'ok', timestamp: new Date().toISOString() }))
 
   // Fastify maneja las peticiones HTTP a través del servidor puro
-  httpServer.on('request', app.server.emit.bind(app.server, 'request'))
+  httpServer.on('request', (req, res) => app.server.emit('request', req, res))
 
   setupSocketHandlers(io, prisma)
 
